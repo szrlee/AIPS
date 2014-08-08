@@ -17,13 +17,57 @@ import os
 import RouteApp
 import threading
 import time
+import pyinotify
 
 log = core.getLogger()
 snort_addr=()
 gateway_mac=EthAddr("08:00:27:47:7b:44")
+MAXCMD = 100
 
 def start_server(socket_map):
     asyncore.loop(map = socket_map)
+
+def start_watch(wm, eh):
+    notifier = pyinotify.Notifier(wm, eh)
+    notifier.loop()
+
+class MyEventHandler(pyinotify.ProcessEvent):
+    log.info("Starting monitor...")
+
+    def gen_cmd(self, pathname):
+        fd = open(pathname, 'r')
+        commands = fd.readlines(MAXCMD)
+        fd.close()
+        return commands
+
+    def func_gen(self, event):
+        commands = self.gen_cmd(event.name)
+        core.secure.func_gen(event.name, commands)
+        
+    def func_del(self, event):
+        func_name = "func_" + event.name
+        try:
+            core.secure.funclist.remove(func_name)
+        except ValueError as e:
+            log.error('%s is not in the funclist'%func_name)
+        func_name = func_name.replace(" ", "_")
+        delattr(core.secure.handlers, func_name)
+
+    def process_IN_MOVED_TO(self, event):
+        log.info('MOVED_TO event: %s'%event.name)
+        self.func_gen(event)
+        
+    def process_IN_MODIFY(self, event):
+        log.info('MODIFY event: %s'%event.name)
+        self.func_gen(event)
+
+    def process_IN_DELETE(self, event):
+        log.info('DELETE event: %s'%event.name)
+        self.func_del(event)
+
+    def process_IN_MOVED_FROM(self, event):
+        log.info('MOVED_FROM event: %s', event.name)
+        self.func_del(event)
 
 class AlertIn(revent.Event):
 
@@ -91,7 +135,6 @@ class secure(object):
     
     def __init__(self, path):
         self.path = path
-        self.maxcmd = 100
         self.filelist=None
         self.counter=0
         self.filenum=0
@@ -120,9 +163,16 @@ class secure(object):
         core.Reminder.addListeners(self)
         core.addListener(pox.core.GoingUpEvent, self.start_server)
         core.call_when_ready(self.start, ["openflow_discovery", "NX"])
-        
+        core.callDelayed(1, self.start_watch)
+
     def start_server(self, event):
         thread.start_new_thread(start_server, (self.socket_map,))
+
+    def start_watch(self):
+        wm = pyinotify.WatchManager()
+        wm.add_watch(self.path, pyinotify.ALL_EVENTS, rec = True)
+        eh = MyEventHandler()
+        thread.start_new_thread(start_watch, (wm, eh))
 
     def func_gen(self, File, cmds):
         func_name = "func_" + File
@@ -154,7 +204,7 @@ class secure(object):
     def alys_file(self):
         for File in self.filelist:
             fd = open(self.path + File,'r')
-            commands = fd.readlines(self.maxcmd)
+            commands = fd.readlines(MAXCMD)
             fd.close()
             yield File, commands
 
@@ -165,6 +215,7 @@ class secure(object):
         filegen = self.alys_file()
         while self.counter < self.filenum:
             File,commands = filegen.next()
+            print commands
             self.func_gen(File, commands)
             self.counter += 1
    
@@ -427,7 +478,7 @@ class secure(object):
 
 
 def launch():
-    path = "rules/"
+    path = "./rules/"
     core.registerNew(Reminder)
     core.registerNew(secure, path)
     log.info("Secure module launched.")
