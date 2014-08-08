@@ -35,23 +35,27 @@ class MyEventHandler(pyinotify.ProcessEvent):
     log.info("Starting monitor...")
 
     def gen_cmd(self, pathname):
-        fd = open(pathname, 'r')
-        commands = fd.readlines(MAXCMD)
-        fd.close()
-        return commands
-
+        try:
+            fd = open(pathname, 'r')
+            commands = fd.readlines(MAXCMD)
+            fd.close()
+            return commands
+        except IOError as e:
+            print "I/O error ({0}): {1}".format(e.errno, e.strerror)
+        return -1
     def func_gen(self, event):
         commands = self.gen_cmd(event.name)
-        core.secure.func_gen(event.name, commands)
+        if not commands == -1:
+            core.secure.func_gen(event.name, commands)
         
     def func_del(self, event):
         func_name = "func_" + event.name
         try:
             core.secure.funclist.remove(func_name)
+            func_name = func_name.replace(" ", "_")
+            delattr(core.secure.handlers, func_name)
         except ValueError as e:
             log.error('%s is not in the funclist'%func_name)
-        func_name = func_name.replace(" ", "_")
-        delattr(core.secure.handlers, func_name)
 
     def process_IN_MOVED_TO(self, event):
         log.info('MOVED_TO event: %s'%event.name)
@@ -184,15 +188,15 @@ class secure(object):
             action=item[0].split(',')
             if action[0]=="time":
                 action[1]=float(action[1])
+                func_action = "self."+action[0]+"("+action[1]+")"
             elif action[0] in self.cmdlist:
-                if(len(action)<2):
+                if(len(action) == 1):
                     func_action = "self."+action[0]+"()"
                 else:
                     func_action = "self."+action[0]+"("+action[1]+")"
-                cmdgenlist.append(func_action)
-            else:
-                pass
-        
+            cmdgenlist.append(func_action)
+            func_action = ''
+        print cmdgenlist
         function = "def "+func_name+"(self, src, dst):\n"
         for command in cmdgenlist:
             function = function+"    "+command+"\n"
