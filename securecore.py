@@ -44,7 +44,7 @@ class MyEventHandler(pyinotify.ProcessEvent):
             fd.close()
             return commands
         except IOError as e:
-            print "I/O error ({0}): {1}".format(e.errno, e.strerror)
+            log.error("I/O error ({0}): {1}".format(e.errno, e.strerror))
         return -1
     def func_gen(self, event):
         commands = self.gen_cmd(event.name)
@@ -166,6 +166,9 @@ class secure(object):
         self.droplist = {}
         self.monitorlist = {}
         self.redirectlist = {}
+        
+        self.ignorelist = []
+        
         self.socket_map = {}
         self.server = secure_server(self.socket_map)
         core.Reminder.addListeners(self)
@@ -200,13 +203,13 @@ class secure(object):
                     func_action = "self."+action[0]+"("+action[1]+")"
             cmdgenlist.append(func_action)
             func_action = ''
-        print cmdgenlist
+
         function = "def "+func_name+"(self, src, dst):\n"
         for command in cmdgenlist:
             function = function+"    "+command+"\n"
-        exec function
-        print function        
+        exec function        
         setattr(self.handlers, func_name, eval(func_name))
+        log.info("%s registered"%func_name)
 
 
     def alys_file(self):
@@ -223,7 +226,6 @@ class secure(object):
         filegen = self.alys_file()
         while self.counter < self.filenum:
             File,commands = filegen.next()
-            print commands
             self.func_gen(File, commands)
             self.counter += 1
    
@@ -401,6 +403,11 @@ class secure(object):
         priority = event.priority
         sip  = event.src
         dip  = event.dst
+
+        if self.monitorlist.has_key(sip) and self.monitorlist[sip] > 0 and not sig in self.ignorelist:
+            self.drop(sip)
+            return
+        
         func_name = "func_"
         if self.func_table.has_key(priority):
             func_name += priority
