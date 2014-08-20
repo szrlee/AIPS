@@ -406,7 +406,6 @@ class secure(object):
 
         if self.monitorlist.has_key(sip) and self.monitorlist[sip] > 0 and not sig in self.ignorelist:
             self.drop(sip)
-            return
         
         func_name = "func_"
         if self.func_table.has_key(priority):
