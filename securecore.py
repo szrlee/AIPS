@@ -165,6 +165,7 @@ class secure(object):
         self.iptable = {}
         self.droplist = {}
         self.monitorlist = {}
+        self.redirectlist = {}
         self.socket_map = {}
         self.server = secure_server(self.socket_map)
         core.Reminder.addListeners(self)
@@ -252,33 +253,42 @@ class secure(object):
     
     def redirect(self,addr):
         ipaddr = IPAddr(addr)
-        if addr in self.droplist:
-            if ip2ser_name.has_key(addr):
-                serv_name = ip2serv_name[addr]
-                if serv_name2ip.has_key(serv_name):
-                    livelist = [ item for item in serv_name2ip[serv_name] if item not in self.droplist ]
-                    if len(livelist) > 0:
-                        new_ip = random.choice(livelist)
-                        log.info("redirectint for %s to %s \nin the service of %s"%(addr, str(new_ip), serv_name))
-                        new_mac = self.iptable[IPAddr(new_ip)]
-                        msg.match.eth_dst = self.iptable[ipaddr]
-                        msg.actions.append(of.ofp_action_dl_addr.set_dst(new_mac))
-                        routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), \
-                            self.mactable[gateway_mac][0], \
-                            self.mactable[new_mac][0])
-                        routelist[-1] = self.mactable[new_mac]
-                        msg.actions.append(of.ofp_action_output(port = routelist[0][1]))
-                        switchid = self.mactable[gateway_mac][0]
-                        switch = core.openflow.getConnection(switchid)
-                        switch.send(msg)
-                    else:
-                        log.error("no more same service ip to redirect")
-                else:
-                    log.error("check the service to ip dictionary %s"%serv_name)
-            else:
-                log.error("check the ip to service dictionary %s"%addr)
+        if not self.iptable.has_key(ipaddr):
+            return
+        if self.redirectlist.has_key(addr):
+            self.redirectlist[addr] += 1
         else:
-            log.error("%s is not in droplist"%addr)
+            self.redirectlist[addr] = 1
+        if self.redirectlist[addr] == 1:
+            if addr in self.droplist:
+                if ip2ser_name.has_key(addr):
+                    serv_name = ip2serv_name[addr]
+                    if serv_name2ip.has_key(serv_name):
+                        livelist = [ item for item in serv_name2ip[serv_name] if item not in self.droplist ]
+                        if len(livelist) > 0:
+                            new_ip = random.choice(livelist)
+                            log.info("redirectint for %s to %s \nin the service of %s"%(addr, str(new_ip), serv_name))
+                            new_mac = self.iptable[IPAddr(new_ip)]
+                            msg = nx.nx_flow_mod()
+                            msg.table_id = 1
+                            msg.match.eth_dst = self.iptable[ipaddr]
+                            msg.actions.append(of.ofp_action_dl_addr.set_dst(new_mac))
+                            routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), \
+                                self.mactable[gateway_mac][0], \
+                                self.mactable[new_mac][0])
+                            routelist[-1] = self.mactable[new_mac]
+                            msg.actions.append(of.ofp_action_output(port = routelist[0][1]))
+                            switchid = self.mactable[gateway_mac][0]
+                            switch = core.openflow.getConnection(switchid)
+                            switch.send(msg)
+                        else:
+                            log.error("no more same service ip to redirect")
+                    else:
+                        log.error("check the service to ip dictionary %s"%serv_name)
+                else:
+                    log.error("check the ip to service dictionary %s"%addr)
+            else:
+                log.error("%s is not in droplist"%addr)
 
     def wait(self,arg):
         log.info("waiting for %d seconds"%arg)
@@ -343,6 +353,23 @@ class secure(object):
         switchid = self.mactable[host_mac][0]
         switch = core.openflow.getConnection(switchid)
         switch.send(msg)
+
+    def unredirect(self, addr):
+        self.redirectlist[addr] -= 1
+        if self.redirectlist[addr] > 0:
+            return
+        self.redirectlist[addr] = 0
+        log.info("unredirecting %s"%addr)
+        msg = nx.nx_flow_mod()
+        msg.command = of.OFPFC_DELETE_STRICT
+        msg.table_id = 1
+        ipaddr = IPAddr(addr)
+        host_mac = self.iptable[ipaddr]
+        msg.match.eth_dst = host_mac
+        switchid = self.mactable[gateway_mac][0]
+        switch = core.openflow.getConnection(switchid)
+        switch.send(msg)
+
 
     def name_process(self):
         for func_name in self.funclist:
