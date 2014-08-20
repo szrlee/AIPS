@@ -263,23 +263,34 @@ class secure(object):
             self.redirectlist[addr] = 1
         if self.redirectlist[addr] == 1:
             if addr in self.droplist:
-                if ip2ser_name.has_key(addr):
+                if ip2serv_name.has_key(addr):
                     serv_name = ip2serv_name[addr]
                     if serv_name2ip.has_key(serv_name):
+                    	Masterip = serv_name2ip[serv_name][0]
+                    	Masteraddr = IPAddr(Masterip)
                         livelist = [ item for item in serv_name2ip[serv_name] if item not in self.droplist ]
                         if len(livelist) > 0:
                             new_ip = random.choice(livelist)
                             log.info("redirectint for %s to %s \nin the service of %s"%(addr, str(new_ip), serv_name))
                             new_mac = self.iptable[IPAddr(new_ip)]
-                            msg = nx.nx_flow_mod()
-                            msg.table_id = 1
-                            msg.match.eth_dst = self.iptable[ipaddr]
+                            msg = of.ofp_flow_mod()
+                            msg.match.dl_dst = self.iptable[Masteraddr]
                             msg.actions.append(of.ofp_action_dl_addr.set_dst(new_mac))
+                            msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(newip)))
                             routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), \
                                 self.mactable[gateway_mac][0], \
                                 self.mactable[new_mac][0])
                             routelist[-1] = self.mactable[new_mac]
                             msg.actions.append(of.ofp_action_output(port = routelist[0][1]))
+                            switchid = self.mactable[gateway_mac][0]
+                            switch = core.openflow.getConnection(switchid)
+                            switch.send(msg)
+                            msg = of.ofp_flow_mod()
+                            msg.match.dl_dst = gateway_mac
+                            #msg.match.nw_proto = pkt.ipv4.TCP_PROTOCO
+                            msg.actions.append(of.ofp_action_dl_addr.set_src(self.iptable[ipaddr]))
+                            msg.actions.append(of.ofp_action_nw_addr.set_src(ipaddr))
+                            msg.actions.append(of.ofp_action_output(port = self.mactable[gateway_mac][1])
                             switchid = self.mactable[gateway_mac][0]
                             switch = core.openflow.getConnection(switchid)
                             switch.send(msg)
@@ -365,9 +376,12 @@ class secure(object):
         msg = nx.nx_flow_mod()
         msg.command = of.OFPFC_DELETE_STRICT
         msg.table_id = 1
-        ipaddr = IPAddr(addr)
-        host_mac = self.iptable[ipaddr]
+        serv_name = ip2serv_name[addr]
+        Masterip = serv_name2ip[serv_name]
+        Masteraddr = IPAddr(Masterip)
+        host_mac = self.iptable[Masteraddr]
         msg.match.eth_dst = host_mac
+        msg.match.of_ip_src = Masterip
         switchid = self.mactable[gateway_mac][0]
         switch = core.openflow.getConnection(switchid)
         switch.send(msg)
