@@ -54,9 +54,9 @@ class MyEventHandler(pyinotify.ProcessEvent):
     def func_del(self, event):
         func_name = "func_" + event.name
         try:
-            func_name = func_name.replace(" ", "_")
+            funcname = func_name.replace(" ", "_")
             core.secure.funclist.remove(func_name)
-            delattr(core.secure.handlers, func_name)
+            delattr(core.secure.handlers, funcname)
             log.info("handler %s removed, rules updated."%func_name)
         except ValueError as e:
             log.error('%s is not in the funclist'%func_name)
@@ -147,7 +147,7 @@ class secure(object):
         self.filelist=None
         self.counter=0
         self.filenum=0
-        self.cmdlist = ["disconnect", "wait", "reconnect", "pass", "monitor", "reset"]
+        self.cmdlist = ["disconnect", "wait", "reconnect", "pass", "monitor", "reset", "redirect", "unredirect"]
 	self.handlers = handlers()
         self.funclist = None
         self.sig_table= {"BAD-TRAFFIC same SRC/DST":"1",
@@ -189,8 +189,8 @@ class secure(object):
 
     def func_gen(self, File, cmds):
         func_name = "func_" + File
-        func_name = func_name.replace(" ", "_")
         self.funclist.append(func_name)
+        func_name = func_name.replace(" ", "_")
         cmdgenlist = []
         for each in cmds:
             item = each.split('\n')
@@ -419,7 +419,7 @@ class secure(object):
         dip  = event.dst
 
         if self.monitorlist.has_key(sip) and self.monitorlist[sip] > 0 and not sig in self.ignorelist:
-            log.info("%s is under attack and may have been captured, so disconncet it.")
+            log.info("%s is under attack and may have been captured, so disconncet it."%sip)
             self.disconnect(sip)
         
         func_name = "func_"
