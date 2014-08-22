@@ -47,33 +47,35 @@ class MyEventHandler(pyinotify.ProcessEvent):
             log.error("I/O error ({0}): {1}".format(e.errno, e.strerror))
         return -1
     def func_gen(self, event):
-        commands = self.gen_cmd(event.name)
+        commands = self.gen_cmd(event.pathname)
         if not commands == -1:
             core.secure.func_gen(event.name, commands)
         
     def func_del(self, event):
         func_name = "func_" + event.name
         try:
-            core.secure.funclist.remove(func_name)
             func_name = func_name.replace(" ", "_")
+            core.secure.funclist.remove(func_name)
             delattr(core.secure.handlers, func_name)
+            log.info("handler %s removed, rules updated."%func_name)
         except ValueError as e:
             log.error('%s is not in the funclist'%func_name)
 
     def process_IN_MOVED_TO(self, event):
-        log.info('MOVED_TO event: %s'%event.name)
+        log.debug('MOVED_TO event: %s'%event.name)
         self.func_gen(event)
         
     def process_IN_MODIFY(self, event):
-        log.info('MODIFY event: %s'%event.name)
+        log.debug('MODIFY event: %s'%event.name)
+        self.func_del(event)
         self.func_gen(event)
 
     def process_IN_DELETE(self, event):
-        log.info('DELETE event: %s'%event.name)
+        log.debug('DELETE event: %s'%event.name)
         self.func_del(event)
 
     def process_IN_MOVED_FROM(self, event):
-        log.info('MOVED_FROM event: %s', event.name)
+        log.debug('MOVED_FROM event: %s', event.name)
         self.func_del(event)
 
 class AlertIn(revent.Event):
@@ -187,8 +189,8 @@ class secure(object):
 
     def func_gen(self, File, cmds):
         func_name = "func_" + File
-        self.funclist.append(func_name)
         func_name = func_name.replace(" ", "_")
+        self.funclist.append(func_name)
         cmdgenlist = []
         for each in cmds:
             item = each.split('\n')
@@ -209,7 +211,7 @@ class secure(object):
             function = function+"    "+command+"\n"
         exec function        
         setattr(self.handlers, func_name, eval(func_name))
-        log.info("%s registered"%func_name)
+        log.info("handler %s registered, rules updated."%func_name)
 
 
     def alys_file(self):
@@ -277,9 +279,7 @@ class secure(object):
                             msg.match.dl_dst = self.iptable[Masteraddr]
                             msg.actions.append(of.ofp_action_dl_addr.set_dst(new_mac))
                             msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(newip)))
-                            routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), \
-                                self.mactable[gateway_mac][0], \
-                                self.mactable[new_mac][0])
+                            routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), self.mactable[gateway_mac][0], self.mactable[new_mac][0])
                             routelist[-1] = self.mactable[new_mac]
                             msg.actions.append(of.ofp_action_output(port = routelist[0][1]))
                             switchid = self.mactable[gateway_mac][0]
@@ -290,7 +290,7 @@ class secure(object):
                             #msg.match.nw_proto = pkt.ipv4.TCP_PROTOCO
                             msg.actions.append(of.ofp_action_dl_addr.set_src(self.iptable[ipaddr]))
                             msg.actions.append(of.ofp_action_nw_addr.set_src(ipaddr))
-                            msg.actions.append(of.ofp_action_output(port = self.mactable[gateway_mac][1])
+                            msg.actions.append(of.ofp_action_output(port = self.mactable[gateway_mac][1]))
                             switchid = self.mactable[gateway_mac][0]
                             switch = core.openflow.getConnection(switchid)
                             switch.send(msg)
