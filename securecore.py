@@ -419,7 +419,8 @@ class secure(object):
         dip  = event.dst
 
         if self.monitorlist.has_key(sip) and self.monitorlist[sip] > 0 and not sig in self.ignorelist:
-            self.drop(sip)
+            log.info("%s is under attack and may have been captured, so disconncet it.")
+            self.disconnect(sip)
         
         func_name = "func_"
         if self.func_table.has_key(priority):
