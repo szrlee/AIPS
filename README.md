@@ -1,4 +1,4 @@
-AIDS
+AIPS
 ====
 
-Automatic Intrusion Detection Systems using SDN
+Automatic Intrusion Prevention Systems using SDN
