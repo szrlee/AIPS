@@ -50,6 +50,16 @@ class MyEventHandler(pyinotify.ProcessEvent):
         commands = self.gen_cmd(event.pathname)
         if not commands == -1:
             core.secure.func_gen(event.name, commands)
+            func_name = event.name
+            value = func_name.split('_')
+            if not core.secure.func_table.has_key(value[0]):
+                core.secure.func_table[value[0]]={}
+            if not core.secure.func_table[value[0]].has_key(value[1]):
+                core.secure.func_table[value[0]][value[1]] = {}
+            if (len(value) == 4):
+                core.secure.func_table[value[0]][value[1]][(value[2],value[3])] = func_name
+            else:
+                core.secure.func_table[value[0]][value[1]]["any"] = func_name
         
     def func_del(self, event):
         func_name = "func_" + event.name
@@ -57,6 +67,12 @@ class MyEventHandler(pyinotify.ProcessEvent):
             funcname = func_name.replace(" ", "_")
             core.secure.funclist.remove(func_name)
             delattr(core.secure.handlers, funcname)
+            value = func_name.split('_')
+            del value[0]
+            if (len(value) == 4):
+                del core.secure.func_table[value[0]][value[1]][(value[2],value[3])]
+            else:
+                del core.ecure.func_table[value[0]][value[1]]["any"]
             log.info("handler %s removed, rules updated."%func_name)
         except ValueError as e:
             log.error('%s is not in the funclist'%func_name)
@@ -394,9 +410,9 @@ class secure(object):
             if not self.func_table.has_key(value[0]):
                 self.func_table[value[0]]={}
             if not self.func_table[value[0]].has_key(value[1]):
-		self.func_table[value[0]][value[1]] = {}
+                self.func_table[value[0]][value[1]] = {}
             if (len(value) == 4):
-		self.func_table[value[0]][value[1]][(value[2],value[3])] = func_name
+                self.func_table[value[0]][value[1]][(value[2],value[3])] = func_name
             else:
                 self.func_table[value[0]][value[1]]["any"] = func_name
         
@@ -445,7 +461,7 @@ class secure(object):
                         if (self.func_table[priority][sig].has_key("any")):
                             func_name += "_any"
                         else:
-                            log.error("No Strategy for function %s"%func_name)
+                            log.error("No Strategy")
                             return
 
             elif (self.func_table[priority].has_key("any")):
@@ -467,14 +483,14 @@ class secure(object):
                         if (self.func_table[priority]["any"].has_key("any")):
                             func_name += "_any"
                         else:
-                            log.error("No Strategy for function %s"%func_name)
+                            log.error("No Strategy")
                             return
             else:
-                log.error("No Strategy for function %s"%func_name)
+                log.error("No Strategy for signatrue %s"%sig)
                 return
 
         else:
-            log.error("No Strategy for priority %s"%func_name)
+            log.error("No Strategy for priority %s"%priority)
             return
         
         func_name = func_name.replace(" ", "_")
