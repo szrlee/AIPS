@@ -10,6 +10,8 @@ from pox.lib.addresses import EthAddr
 import pox.lib.packet as pkt
 import pox.openflow.spanning_tree
 import asyncore
+import mysql.connector
+import struct
 import asynchat
 import socket
 import thread
@@ -21,11 +23,14 @@ import pyinotify
 import random
 
 log = core.getLogger()
-snort_addr=()
-ip2serv_name = {}
-serv_name2ip = {}
+SNORT_ADDR = "10.0.1.2"
+ip2serv_name = {"10.0.0.252" : "http", "10.0.0.1" : "http"}
+serv_name2ip = {"http" : ["10.0.0.252", "10.0.0.1"]}
 gateway_mac=EthAddr("08:00:27:47:7b:44")
 MAXCMD = 100
+HIGH = 3
+MID = 2
+LOW = 1
 
 def start_server(socket_map):
     asyncore.loop(map = socket_map)
@@ -72,7 +77,7 @@ class MyEventHandler(pyinotify.ProcessEvent):
             if (len(value) == 4):
                 del core.secure.func_table[value[0]][value[1]][(value[2],value[3])]
             else:
-                del core.ecure.func_table[value[0]][value[1]]["any"]
+                del core.secure.func_table[value[0]][value[1]]["any"]
             log.info("handler %s removed, rules updated."%func_name)
         except ValueError as e:
             log.error('%s is not in the funclist'%func_name)
@@ -146,7 +151,6 @@ class secure_server(asyncore.dispatcher):
         
     def handle_accept(self):
         connection, addr = self.accept()
-        snort_addr = addr
         server_connect = secure_connect(connection, self.socket_map)
 
 class handlers(object):
@@ -163,7 +167,7 @@ class secure(object):
         self.filelist=None
         self.counter=0
         self.filenum=0
-        self.cmdlist = ["disconnect", "wait", "reconnect", "pass", "monitor", "reset", "redirect", "unredirect"]
+        self.cmdlist = ["disconnect", "wait", "reconnect", "pass", "monitor", "reset", "redirect", "unredirect", "passit"]
 	self.handlers = handlers()
         self.funclist = None
         self.sig_table= {"BAD-TRAFFIC same SRC/DST":"1",
@@ -176,6 +180,7 @@ class secure(object):
                 "SNMP request tcp":"8"}
         self.func_table={}
         self.alys_cmd()
+        self.action_triggered = False 
         
         self.name_process()
 
@@ -216,7 +221,7 @@ class secure(object):
                 func_action = "self."+action[0]+"("+action[1]+")"
             elif action[0] in self.cmdlist:
                 if(len(action) == 1):
-                    func_action = "self."+action[0]+"()"
+                    func_action = "self." + action[0] + "()"
                 else:
                     func_action = "self."+action[0]+"("+action[1]+")"
             cmdgenlist.append(func_action)
@@ -246,41 +251,49 @@ class secure(object):
             File,commands = filegen.next()
             self.func_gen(File, commands)
             self.counter += 1
-   
+
+    def passit(self):
+        self.action_triggered = True
+
     def disconnect(self,addr):
+        self.action_triggered = False
         if self.droplist.has_key(addr):
             self.droplist[addr] += 1
-            return
         else:
             self.droplist[addr] = 1
+        if self.droplist[addr] != 1:
+            return
         ipaddr = IPAddr(addr)
-        if self.iptable.has_key(ipaddr):
+        msg = of.ofp_flow_mod()
+        msg.priority = MID
+        if self.iptable.has_key(ipaddr) and self.iptable[ipaddr] != gateway_mac:
             #Forbid inside machine from sending packets
             host_mac = self.iptable[ipaddr]
             switchid = self.mactable[host_mac][0]
-            msg = of.ofp_flow_mod()
+            msg.match.dl_type = 0x0800
             msg.match.dl_src = host_mac
             msg.actions.append(of.ofp_action_output(port = of.OFPP_NONE))
         else:
-            global gateway_mac
             switchid = self.mactable[gateway_mac][0]
-            msg = of.ofp_flow_mod()
-            msg.match.nw_src = addr
+            msg.match.dl_type = 0x0800
+            msg.match.nw_src = ipaddr
             msg.actions.append(of.ofp_action_output(port = of.OFPP_NONE))
         switch = core.openflow.getConnection(switchid)
         switch.send(msg)
+        self.action_triggered = True
         log.info("%s being disconncted"%addr)
     
     def redirect(self,addr):
+        self.action_triggered = False
         ipaddr = IPAddr(addr)
-        if not self.iptable.has_key(ipaddr):
+        if not ip2serv_name.has_key(addr):
             return
         if self.redirectlist.has_key(addr):
             self.redirectlist[addr] += 1
         else:
             self.redirectlist[addr] = 1
         if self.redirectlist[addr] == 1:
-            if addr in self.droplist:
+            if self.droplist.has_key(addr):
                 if ip2serv_name.has_key(addr):
                     serv_name = ip2serv_name[addr]
                     if serv_name2ip.has_key(serv_name):
@@ -294,7 +307,8 @@ class secure(object):
                             msg = of.ofp_flow_mod()
                             msg.match.dl_dst = self.iptable[Masteraddr]
                             msg.actions.append(of.ofp_action_dl_addr.set_dst(new_mac))
-                            msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(newip)))
+                            msg.actions.append(of.ofp_action_nw_addr.set_dst(IPAddr(new_ip)))
+                            msg.priority = HIGH
                             routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), self.mactable[gateway_mac][0], self.mactable[new_mac][0])
                             routelist[-1] = self.mactable[new_mac]
                             msg.actions.append(of.ofp_action_output(port = routelist[0][1]))
@@ -302,7 +316,9 @@ class secure(object):
                             switch = core.openflow.getConnection(switchid)
                             switch.send(msg)
                             msg = of.ofp_flow_mod()
+                            msg.match.dl_src = self.iptable[IPAddr(new_ip)]
                             msg.match.dl_dst = gateway_mac
+                            msg.priority = HIGH
                             #msg.match.nw_proto = pkt.ipv4.TCP_PROTOCO
                             msg.actions.append(of.ofp_action_dl_addr.set_src(self.iptable[ipaddr]))
                             msg.actions.append(of.ofp_action_nw_addr.set_src(ipaddr))
@@ -310,6 +326,7 @@ class secure(object):
                             switchid = self.mactable[gateway_mac][0]
                             switch = core.openflow.getConnection(switchid)
                             switch.send(msg)
+                            self.action_triggered = True
                         else:
                             log.error("no more same service ip to redirect")
                     else:
@@ -318,12 +335,14 @@ class secure(object):
                     log.error("check the ip to service dictionary %s"%addr)
             else:
                 log.error("%s is not in droplist"%addr)
-
+    
     def wait(self,arg):
+        #if self.action_triggered:
         log.info("waiting for %d seconds"%arg)
         time.sleep(arg)
 
     def reconnect(self,addr):
+        self.action_triggered = False
         self.droplist[addr] -= 1
         if self.droplist[addr] <= 0:
             ipaddr = IPAddr(addr)
@@ -331,20 +350,23 @@ class secure(object):
             log.info("%s being reconnected"%addr)
             msg = of.ofp_flow_mod()
             msg.command = of.OFPFC_DELETE_STRICT
+            msg.priority = MID
             msg.actions.append(of.ofp_action_output(port = of.OFPP_NONE))
-            if self.iptable.has_key(ipaddr):
+            if self.iptable.has_key(ipaddr) and self.iptable[ipaddr] != gateway_mac:
                 host_mac = self.iptable[ipaddr]
                 switchid = self.mactable[host_mac][0]
+                msg.match.dl_type = 0x0800
                 msg.match.dl_src = host_mac
             else:
-                global gateway_mac
                 switchid = self.mactable[gateway_mac][0]
-                msg.match.nw_src = addr
-            msg.priority = of.OFP_DEFAULT_PRIORITY
+                msg.match.dl_type = 0x0800
+                msg.match.nw_src = ipaddr
             switch = core.openflow.getConnection(switchid)
             switch.send(msg)
+            self.action_triggered = True
     
     def monitor(self, addr):
+        self.action_triggered = False
         ipaddr = IPAddr(addr)
         if not self.iptable.has_key(ipaddr):
             return
@@ -364,10 +386,11 @@ class secure(object):
             switchid = self.mactable[self.iptable[ipaddr]][0]
             switch = core.openflow.getConnection(switchid)
             switch.send(msg)
+            self.action_triggered = True
 
     #delete all flow entries in flowtable 1
     def reset(self, addr):
-
+        self.action_triggered = False
         self.monitorlist[addr] -= 1
         if self.monitorlist[addr] > 0:
             return
@@ -382,8 +405,10 @@ class secure(object):
         switchid = self.mactable[host_mac][0]
         switch = core.openflow.getConnection(switchid)
         switch.send(msg)
+        self.action_triggered = True
 
     def unredirect(self, addr):
+        self.action_triggered = False
         self.redirectlist[addr] -= 1
         if self.redirectlist[addr] > 0:
             return
@@ -401,6 +426,7 @@ class secure(object):
         switchid = self.mactable[gateway_mac][0]
         switch = core.openflow.getConnection(switchid)
         switch.send(msg)
+        self.action_triggered = True
 
 
     def name_process(self):
@@ -453,7 +479,8 @@ class secure(object):
                     for time in timelist:
                         before = self.occa_process(occation, time[0])
                         times = self.sql(before, occation, sip, dip)
-                        if times == time[1]:
+                        log.info("this has happened:%d times"%times)
+                        if times >= int(time[1]):
                             func_name += "_" + time[0] + "_" + time[1]
                             flag = True
                             break
@@ -475,7 +502,8 @@ class secure(object):
                     for time in timelist:
                         before = self.occa_process(occation, time[0])
                         times = self.sql(before, occation, sip, dip)
-                        if times == time[1]:
+                        log.info("this has happened:%d times"%times)
+                        if times >= int(time[1]):
                             func_name += "_" + time[0] + "_" + time[1]
                             flag = True
                             break
@@ -499,16 +527,16 @@ class secure(object):
 
     def sql(self, before, occation, src, dst):
         try:
-            conn = mysql.connector.connect(host=snort_addr[0], user='root',passwd='xiaobai',db='snort')
+            conn = mysql.connector.connect(host=SNORT_ADDR, user='root',passwd='root',db='snort')
         except Exception, e:
            log.error(e)
            sys.exit(-1)
-        cursor = conn.cursor
-        cursor.excute("select count(*) as times from iphdr,event where (event.timestamp between %s and %s) and (iphdr.ip_src=%d and iphdr.ip_dst=%d) and iphdr.cid=event.cid;"%(before, occation, socket.ntohl(struct.unpack("I", socket.inet_aton(src))[0]), socket.ntohl(struct.unpack("I", socket.inet_aton(dst))[0])))
+        cursor = conn.cursor()
+        cursor.execute("select count(*) as times from iphdr,event where (event.timestamp between '%s' and '%s') and (iphdr.ip_src=%d and iphdr.ip_dst=%d) and iphdr.cid=event.cid;"%(before, occation, socket.ntohl(struct.unpack("I", socket.inet_aton(src))[0]), socket.ntohl(struct.unpack("I", socket.inet_aton(dst))[0])))
         rows = cursor.fetchone()
         cursor.close()
         conn.close()
-        return str(row.times)
+        return rows[0]
 	
     def _handle_ConnectionUp(self, event):
         msg = nx.nx_packet_in_format()
@@ -568,6 +596,7 @@ class secure(object):
 	        for switchid,out_port in routelist:
 	            msg = nx.nx_flow_mod()
                     msg.table_id = 0
+                    msg.priority = LOW
 	            msg.match.eth_dst = packet.dst
 	            msg.actions.append(of.ofp_action_output(port = out_port))
                     msg.actions.append(nx.nx_action_resubmit.resubmit_table(table = 1))
