@@ -28,8 +28,9 @@ ip2serv_name = {"10.0.0.252" : "http", "10.0.0.1" : "http"}
 serv_name2ip = {"http" : ["10.0.0.252", "10.0.0.1"]}
 gateway_mac=EthAddr("08:00:27:47:7b:44")
 MAXCMD = 100
-HIGH = 3
-MID = 2
+HIGH = 4
+MID = 3
+LOWMID = 2
 LOW = 1
 
 def start_server(socket_map):
@@ -370,15 +371,21 @@ class secure(object):
         ipaddr = IPAddr(addr)
         if not self.iptable.has_key(ipaddr):
             return
+        if self.iptable[ipaddr] == gateway_mac:
+            return
         if self.monitorlist.has_key(addr):
             self.monitorlist[addr] += 1
         else:
             self.monitorlist[addr] = 1
         if self.monitorlist[addr] == 1:
             log.info("packet from/to %s mirrored for monitoring"%addr)
-            msg = nx.nx_flow_mod()
-            msg.table_id = 1
-            msg.match.eth_src = self.iptable[ipaddr]
+            #msg = nx.nx_flow_mod()
+            #msg.table_id = 1
+            msg = of.ofp_flow_mod()
+            msg.priority = LOWMID
+            #msg.match.eth_src = self.iptable[ipaddr]
+            msg.match.dl_src = self.iptable[ipaddr]
+            msg.match.dl_type = 0x0800
             msg.actions.append(of.ofp_action_dl_addr.set_dst(gateway_mac))
             routelist = RouteApp.get_shortest_route(pox.openflow.spanning_tree._calc_spanning_tree(), self.mactable[self.iptable[ipaddr]][0], self.mactable[gateway_mac][0])
             routelist[-1] = self.mactable[gateway_mac]
@@ -599,7 +606,7 @@ class secure(object):
                     msg.priority = LOW
 	            msg.match.eth_dst = packet.dst
 	            msg.actions.append(of.ofp_action_output(port = out_port))
-                    msg.actions.append(nx.nx_action_resubmit.resubmit_table(table = 1))
+                    #msg.actions.append(nx.nx_action_resubmit.resubmit_table(table = 1))
                     msg.idle_timeout = 10
                     msg.hard_timeout = 30
 	            switch = core.openflow.getConnection(switchid)
