@@ -6,7 +6,7 @@ AIPS
 Konw more about AIPS in AIPSdocument.
 ____
 ## High-level programing language based on POX controller
-
+![Architecture](/pox_arch.png)
 #### 6 construction implemented.
 
 1. disconnect: disconnect,ip
